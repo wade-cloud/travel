@@ -6,23 +6,14 @@ import plotly.express as px
 st.set_page_config(page_title="Family Travel Map", layout="wide")
 
 # --- DATA SOURCE ---
-# Using the CSV link you provided
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT4HWhDjNmVovOt9nyO5pHGxzfVqJm5wFeosDwtpRSY2HcWPyZHHsttKGmF52pZwGA9qL4rDyc0Nv4C/pub?output=csv"
 
 @st.cache_data(ttl=300)
 def load_data():
-    # 1. Load the sheet 
-    # We use header=0 to tell Python the first row IS the name of the columns
     df = pd.read_csv(SHEET_URL, header=0)
-    
-    # 2. Identify the Country column (should be the very first one)
     country_col_name = df.columns[0]
-    
-    # 3. Identify Family Member columns (everything EXCEPT the first column)
     family_cols = df.columns[1:].tolist()
     
-    # 4. "Unpivot" the table
-    # This takes names from the top and puts them into a 'Name' column
     melted = df.melt(
         id_vars=[country_col_name], 
         value_vars=family_cols, 
@@ -30,96 +21,81 @@ def load_data():
         value_name='Status'
     )
     
-    # 5. Clean up column names for the rest of the app
     melted.columns = ['Country', 'Name', 'Status']
-    
-    # 6. Filter for 'Yes' (ignoring spaces or capitalization)
+    # Handles "Yes", "TRUE", or checkboxes
     melted['Status'] = melted['Status'].astype(str).str.strip().str.lower()
-    visited_data = melted[melted['Status'] == 'yes'].copy()
+    visited_data = melted[melted['Status'].str.contains('true|yes', na=False)].copy()
     
-    # 7. Final cleanup of the data
-    visited_data = visited_data[['Name', 'Country']].dropna()
-    
-    return visited_data
+    return visited_data[['Name', 'Country']].dropna(), family_cols
 
-# --- APP LOGIC ---
 try:
-    df = load_data()
-    family_members = sorted(df['Name'].unique())
+    df, all_member_names = load_data()
 
-    # HEADER
     st.title("🌍 Family Travel Tracker")
-    st.markdown("Select a family member to see their travels, or 'Family Heatmap' for the cumulative view.")
 
-    # TOP NAVIGATION
-    # Using columns to create a "Button Bar" effect
-    cols = st.columns(len(family_members) + 1)
+    # --- MULTI-SELECT INTERFACE ---
+    col1, col2 = st.columns([2, 1])
     
-    # We use session_state to track which button was clicked
-    if 'view' not in st.session_state:
-        st.session_state.view = 'Family Heatmap'
+    with col1:
+        selected_members = st.multiselect(
+            "Select Family Members:",
+            options=all_member_names,
+            default=all_member_names[:2] if len(all_member_names) > 1 else all_member_names
+        )
 
-    if cols[0].button("👪 Family Heatmap"):
-        st.session_state.view = 'Family Heatmap'
-    
-    for i, member in enumerate(family_members):
-        if cols[i+1].button(member):
-            st.session_state.view = member
+    with col2:
+        mode = st.radio(
+            "Filter Logic:",
+            ["Show Anyone's (OR)", "Show Shared (AND)"],
+            help="OR: Show countries visited by at least one selected person. AND: Show countries where EVERY selected person has been."
+        )
 
-    # --- MAP SECTION ---
-    if st.session_state.view == 'Family Heatmap':
-        # Count unique people per country
-        map_df = df.groupby('Country').count().reset_index()
-        map_df.columns = ['Country', 'Total Visitors']
-        
-        # Get names for hover data
-        names_df = df.groupby('Country')['Name'].apply(lambda x: ', '.join(x)).reset_index()
-        map_df = map_df.merge(names_df, on='Country')
-        
+    if selected_members:
+        # Filter data for selected people
+        filtered_df = df[df['Name'].isin(selected_members)]
+
+        if "AND" in mode:
+            # Logic: Group by country and count unique names. 
+            # If count == number of selected members, they all went.
+            counts = filtered_df.groupby('Country')['Name'].nunique()
+            shared_countries = counts[counts == len(selected_members)].index
+            display_df = filtered_df[filtered_df['Country'].isin(shared_countries)].copy()
+            color_scale = "Purples"
+        else:
+            display_df = filtered_df.copy()
+            color_scale = "Greens"
+
+        # Prepare Map Data
+        map_data = display_df.groupby('Country').agg({
+            'Name': [('Count', 'count'), ('Who', lambda x: ', '.join(sorted(x.unique())))]
+        }).reset_index()
+        map_data.columns = ['Country', 'Visit Count', 'Names']
+
+        # --- DRAW MAP ---
         fig = px.choropleth(
-            map_df,
+            map_data,
             locations="Country",
             locationmode="country names",
-            color="Total Visitors",
+            color="Visit Count",
             hover_name="Country",
-            hover_data={"Name": True, "Total Visitors": True},
-            color_continuous_scale="Greens",
+            hover_data={"Names": True, "Visit Count": True},
+            color_continuous_scale=color_scale,
             projection="natural earth"
         )
-    else:
-        # Individual View
-        member_df = df[df['Name'] == st.session_state.view].copy()
-        member_df['Visited'] = 1
         
-        fig = px.choropleth(
-            member_df,
-            locations="Country",
-            locationmode="country names",
-            color="Visited",
-            hover_name="Country",
-            color_continuous_scale="Blues",
-            projection="natural earth"
+        fig.update_layout(height=600, margin={"r":0,"t":0,"l":0,"b":0})
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- STATS TABLE ---
+        st.divider()
+        st.subheader(f"📊 Countries visited by {', '.join(selected_members)}")
+        st.dataframe(
+            map_data.sort_values('Visit Count', ascending=False),
+            use_container_width=True,
+            hide_index=True
         )
-        fig.update_layout(coloraxis_showscale=False)
-
-    fig.update_layout(height=600, margin={"r":0,"t":0,"l":0,"b":0})
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- LISTS UNDER THE MAP ---
-    st.divider()
-    st.subheader(f"📊 Details: {st.session_state.view}")
-
-    if st.session_state.view == 'Family Heatmap':
-        # Show table of most visited to least visited
-        summary = df.groupby('Country')['Name'].agg(['count', ', '.join]).reset_index()
-        summary.columns = ['Country', 'Count', 'Who Has Been']
-        summary = summary.sort_values(by='Count', ascending=False)
-        st.dataframe(summary, use_container_width=True, hide_index=True)
     else:
-        # Just show that person's list
-        my_list = df[df['Name'] == st.session_state.view]['Country'].sort_values()
-        st.write(f"Total Countries Visited: **{len(my_list)}**")
-        st.table(my_list)
+        st.warning("Please select at least one family member to see the map.")
 
 except Exception as e:
-    st.error(f"Waiting for data... Check if your Google Sheet is published and has rows. Error: {e}")
+    st.error(f"Error connecting to data: {e}")
