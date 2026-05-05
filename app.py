@@ -9,11 +9,26 @@ st.set_page_config(page_title="Family Travel Map", layout="wide")
 # Using the CSV link you provided
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT4HWhDjNmVovOt9nyO5pHGxzfVqJm5wFeosDwtpRSY2HcWPyZHHsttKGmF52pZwGA9qL4rDyc0Nv4C/pub?output=csv"
 
-@st.cache_data(ttl=300)  # Refresh data every 5 minutes
+@st.cache_data(ttl=300)
 def load_data():
+    # Load the sheet
     df = pd.read_csv(SHEET_URL)
-    # Automatically identify Name and Country columns
-    df.columns = ['Name', 'Country']
+    
+    # Check how many columns we actually have
+    actual_col_count = len(df.columns)
+    
+    if actual_col_count >= 2:
+        # Take ONLY the first two columns, no matter how many exist
+        df = df.iloc[:, [0, 1]] 
+        # Force rename them so the rest of the code works
+        df.columns = ['Name', 'Country']
+    else:
+        # If the sheet is empty or only has 1 column, create an empty structure
+        return pd.DataFrame(columns=['Name', 'Country'])
+        
+    # Clean up: remove any rows where Name or Country is missing
+    df = df.dropna(subset=['Name', 'Country'])
+    
     return df
 
 # --- APP LOGIC ---
