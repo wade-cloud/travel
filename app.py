@@ -22,8 +22,8 @@ def load_data():
     )
     
     melted.columns = ['Country', 'Name', 'Status']
-    # Handles "Yes", "TRUE", or checkboxes
     melted['Status'] = melted['Status'].astype(str).str.strip().str.lower()
+    # Support for "Yes", "True", or Checkboxes
     visited_data = melted[melted['Status'].str.contains('true|yes', na=False)].copy()
     
     return visited_data[['Name', 'Country']].dropna(), family_cols
@@ -33,69 +33,68 @@ try:
 
     st.title("🌍 Family Travel Tracker")
 
-    # --- MULTI-SELECT INTERFACE ---
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        selected_members = st.multiselect(
-            "Select Family Members:",
-            options=all_member_names,
-            default=all_member_names[:2] if len(all_member_names) > 1 else all_member_names
-        )
-
-    with col2:
-        mode = st.radio(
-            "Filter Logic:",
-            ["Show Anyone's (OR)", "Show Shared (AND)"],
-            help="OR: Show countries visited by at least one selected person. AND: Show countries where EVERY selected person has been."
-        )
+    selected_members = st.multiselect(
+        "Select Family Members to Compare:",
+        options=all_member_names,
+        default=all_member_names
+    )
 
     if selected_members:
-        # Filter data for selected people
+        # 1. Filter for selected members
         filtered_df = df[df['Name'].isin(selected_members)]
 
-        if "AND" in mode:
-            # Logic: Group by country and count unique names. 
-            # If count == number of selected members, they all went.
-            counts = filtered_df.groupby('Country')['Name'].nunique()
-            shared_countries = counts[counts == len(selected_members)].index
-            display_df = filtered_df[filtered_df['Country'].isin(shared_countries)].copy()
-            color_scale = "Purples"
-        else:
-            display_df = filtered_df.copy()
-            color_scale = "Greens"
+        # 2. Determine who went where
+        # Group by country to see how many (and who) visited
+        map_prep = filtered_df.groupby('Country')['Name'].unique().reset_index()
+        map_prep['Visitor_Count'] = map_prep['Name'].apply(len)
+        map_prep['Visitor_List'] = map_prep['Name'].apply(lambda x: ', '.join(sorted(x)))
 
-        # Prepare Map Data
-        map_data = display_df.groupby('Country').agg({
-            'Name': [('Count', 'count'), ('Who', lambda x: ', '.join(sorted(x.unique())))]
-        }).reset_index()
-        map_data.columns = ['Country', 'Visit Count', 'Names']
+        # 3. Create the "Display Category" for coloring
+        def get_color_category(row):
+            if row['Visitor_Count'] > 1:
+                return "Multiple Members"
+            else:
+                return row['Name'][0] # Returns the single person's name
 
-        # --- DRAW MAP ---
+        map_prep['Display_Category'] = map_prep.apply(get_color_category, axis=1)
+
+        # 4. Define the Custom Color Palette
+        # You can customize these hex codes!
+        base_colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692']
+        color_map = {name: base_colors[i % len(base_colors)] for i, name in enumerate(all_member_names)}
+        color_map["Multiple Members"] = "#000000" # Black for overlaps
+
+        # 5. Build the Map
         fig = px.choropleth(
-            map_data,
+            map_prep,
             locations="Country",
             locationmode="country names",
-            color="Visit Count",
+            color="Display_Category",
             hover_name="Country",
-            hover_data={"Names": True, "Visit Count": True},
-            color_continuous_scale=color_scale,
+            hover_data={"Visitor_List": True, "Display_Category": False},
+            color_discrete_map=color_map,
+            title="Travel Map: Colors by Member (Black = Overlap)",
             projection="natural earth"
         )
+
+        fig.update_layout(
+            height=600, 
+            margin={"r":0,"t":40,"l":0,"b":0},
+            legend_title_text='Visitors'
+        )
         
-        fig.update_layout(height=600, margin={"r":0,"t":0,"l":0,"b":0})
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- STATS TABLE ---
+        # 6. Detailed Table
         st.divider()
-        st.subheader(f"📊 Countries visited by {', '.join(selected_members)}")
+        st.subheader("Travel Details")
         st.dataframe(
-            map_data.sort_values('Visit Count', ascending=False),
+            map_prep[['Country', 'Visitor_List', 'Visitor_Count']].sort_values('Visitor_Count', ascending=False),
             use_container_width=True,
             hide_index=True
         )
     else:
-        st.warning("Please select at least one family member to see the map.")
+        st.info("Please select family members above.")
 
 except Exception as e:
-    st.error(f"Error connecting to data: {e}")
+    st.error(f"Error loading map: {e}")
