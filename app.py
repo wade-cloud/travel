@@ -11,25 +11,28 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT4HWhDjNmVovOt9nyO
 
 @st.cache_data(ttl=300)
 def load_data():
-    # Load the sheet
+    # 1. Load the sheet
     df = pd.read_csv(SHEET_URL)
     
-    # Check how many columns we actually have
-    actual_col_count = len(df.columns)
+    # 2. Identify the Country column (Column 0)
+    country_col = df.columns[0]
     
-    if actual_col_count >= 2:
-        # Take ONLY the first two columns, no matter how many exist
-        df = df.iloc[:, [0, 1]] 
-        # Force rename them so the rest of the code works
-        df.columns = ['Name', 'Country']
-    else:
-        # If the sheet is empty or only has 1 column, create an empty structure
-        return pd.DataFrame(columns=['Name', 'Country'])
-        
-    # Clean up: remove any rows where Name or Country is missing
-    df = df.dropna(subset=['Name', 'Country'])
+    # 3. "Melt" the data: This turns the names from headers into a single column
+    # It takes columns like [Country, Alice, Bob] and turns them into [Country, Name, Status]
+    melted = df.melt(id_vars=[country_col], var_name='Name', value_name='Status')
     
-    return df
+    # 4. Clean up the Country column name
+    melted.columns = ['Country', 'Name', 'Status']
+    
+    # 5. Only keep rows where the person has been (Status is 'Yes' or 'yes')
+    # This also handles case sensitivity and extra spaces
+    melted['Status'] = melted['Status'].astype(str).str.strip().str.lower()
+    visited_data = melted[melted['Status'] == 'yes'].copy()
+    
+    # 6. Final cleanup
+    visited_data = visited_data[['Name', 'Country']].dropna()
+    
+    return visited_data
 
 # --- APP LOGIC ---
 try:
