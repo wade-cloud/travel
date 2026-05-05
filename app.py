@@ -11,25 +11,33 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT4HWhDjNmVovOt9nyO
 
 @st.cache_data(ttl=300)
 def load_data():
-    # 1. Load the sheet
-    df = pd.read_csv(SHEET_URL)
+    # 1. Load the sheet 
+    # We use header=0 to tell Python the first row IS the name of the columns
+    df = pd.read_csv(SHEET_URL, header=0)
     
-    # 2. Identify the Country column (Column 0)
-    country_col = df.columns[0]
+    # 2. Identify the Country column (should be the very first one)
+    country_col_name = df.columns[0]
     
-    # 3. "Melt" the data: This turns the names from headers into a single column
-    # It takes columns like [Country, Alice, Bob] and turns them into [Country, Name, Status]
-    melted = df.melt(id_vars=[country_col], var_name='Name', value_name='Status')
+    # 3. Identify Family Member columns (everything EXCEPT the first column)
+    family_cols = df.columns[1:].tolist()
     
-    # 4. Clean up the Country column name
+    # 4. "Unpivot" the table
+    # This takes names from the top and puts them into a 'Name' column
+    melted = df.melt(
+        id_vars=[country_col_name], 
+        value_vars=family_cols, 
+        var_name='Name', 
+        value_name='Status'
+    )
+    
+    # 5. Clean up column names for the rest of the app
     melted.columns = ['Country', 'Name', 'Status']
     
-    # 5. Only keep rows where the person has been (Status is 'Yes' or 'yes')
-    # This also handles case sensitivity and extra spaces
+    # 6. Filter for 'Yes' (ignoring spaces or capitalization)
     melted['Status'] = melted['Status'].astype(str).str.strip().str.lower()
     visited_data = melted[melted['Status'] == 'yes'].copy()
     
-    # 6. Final cleanup
+    # 7. Final cleanup of the data
     visited_data = visited_data[['Name', 'Country']].dropna()
     
     return visited_data
