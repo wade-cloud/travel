@@ -8,12 +8,22 @@ st.set_page_config(page_title="Family Travel Map", layout="wide")
 # --- DATA SOURCE ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT4HWhDjNmVovOt9nyO5pHGxzfVqJm5wFeosDwtpRSY2HcWPyZHHsttKGmF52pZwGA9qL4rDyc0Nv4C/pub?output=csv"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60) # Set to 60 seconds for faster updates
 def load_data():
+    # 1. Load the sheet
     df = pd.read_csv(SHEET_URL, header=0)
+    
+    # 2. REMOVE UNNAMED COLUMNS
+    # This looks for any column header starting with "Unnamed" and drops it
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    
+    # 3. Identify the Country column (should be the very first one)
     country_col_name = df.columns[0]
+    
+    # 4. Identify Family Member columns (everything left EXCEPT the first column)
     family_cols = df.columns[1:].tolist()
     
+    # 5. "Unpivot" the table
     melted = df.melt(
         id_vars=[country_col_name], 
         value_vars=family_cols, 
@@ -21,9 +31,11 @@ def load_data():
         value_name='Status'
     )
     
+    # 6. Clean up
     melted.columns = ['Country', 'Name', 'Status']
     melted['Status'] = melted['Status'].astype(str).str.strip().str.lower()
-    # Support for "Yes", "True", or Checkboxes
+    
+    # Handles "Yes", "TRUE", or checkboxes
     visited_data = melted[melted['Status'].str.contains('true|yes', na=False)].copy()
     
     return visited_data[['Name', 'Country']].dropna(), family_cols
